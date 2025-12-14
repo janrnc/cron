@@ -44,3 +44,40 @@ func TestWithVerboseLogger(t *testing.T) {
 		t.Error("expected to see some actions, got:", out)
 	}
 }
+
+func TestWithOnCycleCompleted(t *testing.T) {
+	var buf syncWriter
+	f := func() {
+		_, err := buf.Write([]byte{'E', 'N', 'D'})
+		if err != nil {
+			t.Error("non-nil error")
+		}
+	}
+	c := New(WithOnCycleCompleted(f))
+
+	_, err := c.Add("@every 1s", func() {
+		_, err := buf.Write([]byte{'1'})
+		if err != nil {
+			t.Error("non-nil error")
+		}
+	})
+	if err != nil {
+		t.Error("non-nil error")
+	}
+	_, err = c.Add("@every 1s", func() {
+		_, err := buf.Write([]byte{'2'})
+		if err != nil {
+			t.Error("non-nil error")
+		}
+	})
+	if err != nil {
+		t.Error("non-nil error")
+	}
+	c.Start()
+	time.Sleep(OneSecond)
+	c.Stop()
+	out := buf.String()
+	if !strings.HasSuffix(out, "END") {
+		t.Error("expected callback to be executed after jobs completed")
+	}
+}
