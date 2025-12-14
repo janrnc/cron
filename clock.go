@@ -3,7 +3,7 @@ package cron
 import "time"
 
 // The cron scheduler implements the following cycle:
-//   - next job time evalutation
+//   - next job time evaluation
 //   - timer setup: clock.NopTimer() when there are no jobs registered, clock.Timer() with the
 //     next activation time otherwise
 //   - wakes up when timer fires or other actions are triggered (e.g. insertion, removal): handles event and move
@@ -17,4 +17,10 @@ type Clock interface {
 	Now() time.Time
 	Timer(time.Time) (timer <-chan struct{}, stop func())
 	NopTimer() (timer <-chan struct{}, stop func())
+}
+
+type ManualClock interface {
+	Clock
+	AdvanceBy(duration time.Duration)
+	AdvanceTo(time time.Time)
 }
