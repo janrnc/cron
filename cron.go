@@ -23,19 +23,20 @@ type removal struct {
 // specified by the schedule. It may be started, stopped, and the entries may
 // be inspected while running.
 type Cron struct {
-	entries   entryHeap
-	chain     Chain
-	stop      chan struct{}
-	add       chan insertion
-	remove    chan removal
-	snapshot  chan chan []Entry
-	running   bool
-	logger    *slog.Logger
-	runningMu sync.Mutex
-	parser    Parser
-	next      ID
-	jobWaiter sync.WaitGroup
-	clock     Clock
+	entries          entryHeap
+	chain            Chain
+	stop             chan struct{}
+	add              chan insertion
+	remove           chan removal
+	snapshot         chan chan []Entry
+	running          bool
+	logger           *slog.Logger
+	runningMu        sync.Mutex
+	parser           Parser
+	next             ID
+	jobWaiter        sync.WaitGroup
+	clock            Clock
+	onCycleCompleted []func()
 }
 
 // Schedule describes a job's duty cycle.
@@ -87,18 +88,19 @@ type Entry struct {
 // See "cron.With*" to modify the default behavior.
 func New(opts ...Option) *Cron {
 	c := &Cron{
-		entries:   entryHeap{},
-		chain:     NewChain(),
-		add:       make(chan insertion),
-		stop:      make(chan struct{}),
-		snapshot:  make(chan chan []Entry),
-		remove:    make(chan removal),
-		running:   false,
-		runningMu: sync.Mutex{},
-		logger:    slog.Default(),
-		parser:    standardParser,
-		next:      1,
-		clock:     NewDefaultClock(time.Local, DefaultNopTimer),
+		entries:          entryHeap{},
+		chain:            NewChain(),
+		add:              make(chan insertion),
+		stop:             make(chan struct{}),
+		snapshot:         make(chan chan []Entry),
+		remove:           make(chan removal),
+		running:          false,
+		runningMu:        sync.Mutex{},
+		logger:           slog.Default(),
+		parser:           standardParser,
+		next:             1,
+		clock:            NewDefaultClock(time.Local, DefaultNopTimer),
+		onCycleCompleted: []func(){},
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -231,6 +233,7 @@ func (c *Cron) run() {
 			case <-timer:
 				now = c.clock.Now()
 				c.logger.Debug("scheduler woke up", "event", "wake", "now", now)
+				cycleGroup := &sync.WaitGroup{}
 
 				// Run every entry whose next time was less than now
 				for {
@@ -238,12 +241,18 @@ func (c *Cron) run() {
 						break
 					}
 					e := heap.Pop(&c.entries).(*Entry)
-					c.startJob(e.job)
+					c.startJob(e.job, cycleGroup)
 					e.Prev = e.Next
 					e.Next = e.Schedule.Next(now)
 					heap.Push(&c.entries, e)
 					e.logger.Info("starting job", "event", "run", "now", now, "next", e.Next)
 				}
+				go func() {
+					cycleGroup.Wait()
+					for _, f := range c.onCycleCompleted {
+						f()
+					}
+				}()
 
 			case insertion := <-c.add:
 				stop()
@@ -275,10 +284,14 @@ func (c *Cron) run() {
 }
 
 // startJob runs the given job in a new goroutine.
-func (c *Cron) startJob(job func()) {
+func (c *Cron) startJob(job func(), cycleGroup *sync.WaitGroup) {
 	c.jobWaiter.Add(1)
+	cycleGroup.Add(1)
 	go func() {
-		defer c.jobWaiter.Done()
+		defer func() {
+			cycleGroup.Done()
+			c.jobWaiter.Done()
+		}()
 		job()
 	}()
 }

@@ -46,3 +46,11 @@ func WithClock(clock Clock) Option {
 		c.clock = clock
 	}
 }
+
+// WithOnCycleCompleted registers a callback that will be executed every time all jobs executions that
+// have been started in the same instant have completed.
+func WithOnCycleCompleted(f func()) Option {
+	return func(c *Cron) {
+		c.onCycleCompleted = append(c.onCycleCompleted, f)
+	}
+}
