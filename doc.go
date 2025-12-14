@@ -155,7 +155,7 @@ it will have only 2 minutes of idle time between each run.
 # Clock and time zones
 
 Cron use a [Clock] interface when interacting with time. A custom clock can be set using
-[WithClock] option.
+[WithClock] option. [NewTimerSkippingInstantExecutionClock] can be helpful for testing purposes.
 
 The clock is also responsible for defining the timezone to be used when applying the cron schedule.
 The default clock can be created with a different timezone using [NewDefaultClock].
