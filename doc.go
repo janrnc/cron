@@ -152,12 +152,15 @@ Note: The interval does not take the job runtime into account.  For example,
 if a job takes 3 minutes to run, and it is scheduled to run every 5 minutes,
 it will have only 2 minutes of idle time between each run.
 
-# Time zones
+# Clock and time zones
 
+Cron use a [Clock] interface when interacting with time. A custom clock can be set using
+[WithClock] option.
+
+The clock is also responsible for defining the timezone to be used when applying the cron schedule.
+The default clock can be created with a different timezone using [NewDefaultClock].
 By default, all interpretation and scheduling is done in the machine's local
-time zone (time.Local). You can specify a different time zone on construction:
-
-	cron.New(cron.WithLocation(time.UTC))
+time zone (time.Local).
 
 Individual cron schedules may also override the time zone they are to be
 interpreted in by providing an additional space-separated field at the beginning

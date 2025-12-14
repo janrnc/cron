@@ -32,10 +32,10 @@ type Cron struct {
 	running   bool
 	logger    *slog.Logger
 	runningMu sync.Mutex
-	location  *time.Location
 	parser    Parser
 	next      ID
 	jobWaiter sync.WaitGroup
+	clock     Clock
 }
 
 // Schedule describes a job's duty cycle.
@@ -96,9 +96,9 @@ func New(opts ...Option) *Cron {
 		running:   false,
 		runningMu: sync.Mutex{},
 		logger:    slog.Default(),
-		location:  time.Local,
 		parser:    standardParser,
 		next:      1,
+		clock:     NewDefaultClock(time.Local, DefaultNopTimer),
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -156,11 +156,6 @@ func (c *Cron) Entries() []Entry {
 	return c.entrySnapshot()
 }
 
-// Location gets the time zone location
-func (c *Cron) Location() *time.Location {
-	return c.location
-}
-
 // Entry returns a snapshot of the given entry, or nil if it couldn't be found.
 func (c *Cron) Entry(id ID) Entry {
 	for _, entry := range c.Entries() {
@@ -213,7 +208,7 @@ func (c *Cron) run() {
 	c.logger.Info("starting scheduler", "event", "start")
 
 	// Figure out the next activation times for each entry.
-	now := c.now()
+	now := c.clock.Now()
 	for _, entry := range c.entries {
 		entry.Next = entry.Schedule.Next(now)
 		entry.logger.Debug("next execution time computed", "event", "next", "now", now, "next", entry.Next)
@@ -221,19 +216,20 @@ func (c *Cron) run() {
 	heap.Init(&c.entries)
 
 	for {
-		var timer *time.Timer
+		var timer <-chan struct{}
+		var stop func()
 		if len(c.entries) == 0 || c.entries[0].Next.IsZero() {
 			// If there are no entries yet, just sleep - it still handles new entries
 			// and stop requests.
-			timer = time.NewTimer(100000 * time.Hour)
+			timer, stop = c.clock.NopTimer()
 		} else {
-			timer = time.NewTimer(c.entries[0].Next.Sub(now))
+			timer, stop = c.clock.Timer(c.entries[0].Next)
 		}
 
 		for {
 			select {
-			case now = <-timer.C:
-				now = now.In(c.location)
+			case <-timer:
+				now = c.clock.Now()
 				c.logger.Debug("scheduler woke up", "event", "wake", "now", now)
 
 				// Run every entry whose next time was less than now
@@ -250,8 +246,8 @@ func (c *Cron) run() {
 				}
 
 			case insertion := <-c.add:
-				timer.Stop()
-				now = c.now()
+				stop()
+				now = c.clock.Now()
 				entry := insertion.entry
 				entry.Next = entry.Schedule.Next(now)
 				heap.Push(&c.entries, entry)
@@ -263,13 +259,12 @@ func (c *Cron) run() {
 				continue
 
 			case <-c.stop:
-				timer.Stop()
+				stop()
 				c.logger.Info("stopping scheduler", "event", "stop")
 				return
 
 			case removal := <-c.remove:
-				timer.Stop()
-				now = c.now()
+				stop()
 				c.removeEntry(removal.id)
 				removal.done <- struct{}{}
 			}
@@ -286,11 +281,6 @@ func (c *Cron) startJob(job func()) {
 		defer c.jobWaiter.Done()
 		job()
 	}()
-}
-
-// now returns current time in c location
-func (c *Cron) now() time.Time {
-	return time.Now().In(c.location)
 }
 
 // Stop stops the cron scheduler if it is running; otherwise it does nothing.
