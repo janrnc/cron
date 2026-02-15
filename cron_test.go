@@ -37,42 +37,17 @@ func (sw *syncWriter) String() string {
 	return sw.wr.String()
 }
 
-func newBufLogger(sw *syncWriter) *slog.Logger {
-	return slog.New(slog.NewTextHandler(sw, nil))
-}
-
-func TestFuncPanicRecovery(t *testing.T) {
+func TestPanicRecovery(t *testing.T) {
 	var buf syncWriter
+	handler := slog.NewJSONHandler(&buf, nil)
+	logger := slog.New(handler)
 	clock := NewTimerSkippingInstantExecutionClock(start)
-	cron := New(WithParser(secondParser),
-		WithChain(Recover(newBufLogger(&buf))), WithClock(clock))
+	cron := New(WithParser(secondParser), WithClock(clock), WithLogger(logger))
 	cron.Start()
 	defer cron.Stop()
 	_, err := cron.Add("* * * * * ?", func() {
 		panic("YOLO")
 	})
-	if err != nil {
-		t.Error("non-nil error")
-	}
-
-	clock.AdvanceBy(time.Second)
-	if !strings.Contains(buf.String(), "YOLO") {
-		t.Error("expected a panic to be logged, got none")
-	}
-}
-
-func dummy() {
-	panic("YOLO")
-}
-
-func TestJobPanicRecovery(t *testing.T) {
-	var buf syncWriter
-	clock := NewTimerSkippingInstantExecutionClock(start)
-	cron := New(WithParser(secondParser),
-		WithChain(Recover(newBufLogger(&buf))), WithClock(clock))
-	cron.Start()
-	defer cron.Stop()
-	_, err := cron.Add("* * * * * ?", dummy)
 	if err != nil {
 		t.Error("non-nil error")
 	}

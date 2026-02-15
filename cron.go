@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -241,7 +242,7 @@ func (c *Cron) run() {
 						break
 					}
 					e := heap.Pop(&c.entries).(*Entry)
-					c.startJob(e.job, cycleGroup)
+					c.startJob(e, cycleGroup)
 					e.Prev = e.Next
 					e.Next = e.Schedule.Next(now)
 					heap.Push(&c.entries, e)
@@ -284,15 +285,25 @@ func (c *Cron) run() {
 }
 
 // startJob runs the given job in a new goroutine.
-func (c *Cron) startJob(job func(), cycleGroup *sync.WaitGroup) {
+func (c *Cron) startJob(entry *Entry, cycleGroup *sync.WaitGroup) {
 	c.jobWaiter.Add(1)
 	cycleGroup.Add(1)
 	go func() {
 		defer func() {
+			if r := recover(); r != nil {
+				const size = 64 << 10
+				buf := make([]byte, size)
+				buf = buf[:runtime.Stack(buf, false)]
+				err, ok := r.(error)
+				if !ok {
+					err = fmt.Errorf("%v", r)
+				}
+				entry.logger.Error(err.Error(), "event", "panic", "stack", "...\n"+string(buf))
+			}
 			cycleGroup.Done()
 			c.jobWaiter.Done()
 		}()
-		job()
+		entry.job()
 	}()
 }
 
