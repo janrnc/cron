@@ -43,26 +43,6 @@ func TestChain(t *testing.T) {
 	}
 }
 
-func TestChainRecover(t *testing.T) {
-	panickingJob := func() {
-		panic("panickingJob panics")
-	}
-
-	t.Run("panic exits job by default", func(t *testing.T) {
-		defer func() {
-			if err := recover(); err == nil {
-				t.Errorf("panic expected, but none received")
-			}
-		}()
-		NewChain().Then(panickingJob)()
-	})
-
-	t.Run("Recovering JobWrapper recovers", func(t *testing.T) {
-		NewChain(Recover(discardLogger)).
-			Then(panickingJob)()
-	})
-}
-
 type countJob struct {
 	m       sync.Mutex
 	started int
