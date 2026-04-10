@@ -10,15 +10,21 @@ type Option func(*Cron)
 // WithSeconds overrides the parser used for interpreting job schedules to
 // include a seconds field as the first one.
 func WithSeconds() Option {
-	return WithParser(NewParser(
+	return WithParser(toInterface(NewDefaultParser(
 		Second | Minute | Hour | Dom | Month | Dow | Descriptor,
-	))
+	)))
 }
 
 // WithParser overrides the parser used for interpreting job schedules.
 func WithParser(p Parser) Option {
 	return func(c *Cron) {
 		c.parser = p
+	}
+}
+
+func WithDefaultParser(p *DefaultParser) Option {
+	return func(c *Cron) {
+		c.parser = toInterface(p)
 	}
 }
 

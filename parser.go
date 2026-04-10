@@ -49,8 +49,8 @@ type Parser interface {
 	Parse(spec string) (Schedule, error)
 }
 
-// A default defaultParser that can be configured.
-type defaultParser struct {
+// A default DefaultParser that can be configured.
+type DefaultParser struct {
 	options ParseOption
 }
 
@@ -72,7 +72,7 @@ type defaultParser struct {
 //	// Same as above, just makes Dow optional
 //	specParser := NewParser(Dom | Month | DowOptional)
 //	sched, err := specParser.Parse("15 */3")
-func NewParser(options ParseOption) Parser {
+func NewDefaultParser(options ParseOption) *DefaultParser {
 	optionals := 0
 	if options&DowOptional > 0 {
 		optionals++
@@ -83,13 +83,13 @@ func NewParser(options ParseOption) Parser {
 	if optionals > 1 {
 		panic("multiple optionals may not be configured")
 	}
-	return defaultParser{options}
+	return &DefaultParser{options}
 }
 
 // Parse returns a new crontab schedule representing the given spec.
 // It returns a descriptive error if the spec is not valid.
 // It accepts crontab specs and features configured by NewParser.
-func (p defaultParser) Parse(spec string) (Schedule, error) {
+func (p *DefaultParser) Parse(spec string) (*DefaultSchedule, error) {
 	if len(spec) == 0 {
 		return nil, fmt.Errorf("empty spec string")
 	}
@@ -148,14 +148,30 @@ func (p defaultParser) Parse(spec string) (Schedule, error) {
 		return nil, err
 	}
 
-	return &specSchedule{
-		SecondMatch: second,
-		MinuteMatch: minute,
-		HourMatch:   hour,
-		DayMatch:    day,
-		MonthMatch:  month,
-		Location:    loc,
+	return &DefaultSchedule{
+		secondMatch: second,
+		minuteMatch: minute,
+		hourMatch:   hour,
+		dayMatch:    day,
+		monthMatch:  month,
+		location:    loc,
 	}, nil
+}
+
+type adapter struct {
+	DefaultParser
+}
+
+func (a *adapter) Parse(spec string) (Schedule, error) {
+	schedule, err := a.DefaultParser.Parse(spec)
+	if err != nil {
+		return nil, err
+	}
+	return schedule, nil
+}
+
+func toInterface(p *DefaultParser) Parser {
+	return &adapter{*p}
 }
 
 // normalizeFields takes a subset set of the time fields and returns the full set
@@ -220,7 +236,7 @@ func normalizeFields(fields []string, options ParseOption) ([]string, error) {
 	return expandedFields, nil
 }
 
-var standardParser = NewParser(
+var standardParser = NewDefaultParser(
 	Minute | Hour | Dom | Month | Dow | Descriptor,
 )
 
@@ -232,12 +248,12 @@ var standardParser = NewParser(
 // It accepts
 //   - Standard crontab specs, e.g. "* * * * ?"
 //   - Descriptors, e.g. "@midnight", "@every 1h30m"
-func ParseStandard(standardSpec string) (Schedule, error) {
+func ParseStandard(standardSpec string) (*DefaultSchedule, error) {
 	return standardParser.Parse(standardSpec)
 }
 
 // parseDescriptor returns a predefined schedule for the expression, or error if none matches.
-func parseDescriptor(descriptor string, loc *time.Location) (Schedule, error) {
+func parseDescriptor(descriptor string, loc *time.Location) (*DefaultSchedule, error) {
 	switch descriptor {
 	case "@yearly", "@annually":
 		return create("0", "0", "0", "1", "1", "*", loc)
@@ -267,7 +283,7 @@ func parseDescriptor(descriptor string, loc *time.Location) (Schedule, error) {
 	return nil, fmt.Errorf("unrecognized descriptor: %s", descriptor)
 }
 
-func create(second, minute, hour, dom, month, dow string, location *time.Location) (*specSchedule, error) {
+func create(second, minute, hour, dom, month, dow string, location *time.Location) (*DefaultSchedule, error) {
 	secondMatch, err := parser.ParseSecond(second)
 	if err != nil {
 		return nil, err
@@ -288,12 +304,12 @@ func create(second, minute, hour, dom, month, dow string, location *time.Locatio
 	if err != nil {
 		return nil, err
 	}
-	return &specSchedule{
-		SecondMatch: secondMatch,
-		MinuteMatch: minuteMatch,
-		HourMatch:   hourMatch,
-		DayMatch:    dayMatch,
-		MonthMatch:  monthMatch,
-		Location:    location,
+	return &DefaultSchedule{
+		secondMatch: secondMatch,
+		minuteMatch: minuteMatch,
+		hourMatch:   hourMatch,
+		dayMatch:    dayMatch,
+		monthMatch:  monthMatch,
+		location:    location,
 	}, nil
 }

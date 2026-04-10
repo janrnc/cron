@@ -8,8 +8,9 @@ import (
 	"unicode"
 )
 
-var secondParser = NewParser(Second | Minute | Hour | Dom | Month | DowOptional | Descriptor)
-var optionalSecondParser = NewParser(SecondOptional | Minute | Hour | Dom | Month | Dow | Descriptor)
+var secondParser = toInterface(NewDefaultParser(Second | Minute | Hour | Dom | Month | DowOptional | Descriptor))
+var optionalSecondParser = toInterface(NewDefaultParser(SecondOptional | Minute | Hour | Dom | Month | Dow | Descriptor))
+var interfaceStandardParser = toInterface(standardParser)
 
 func TestParseScheduleErrors(t *testing.T) {
 	var tests = []struct{ expr, err string }{
@@ -48,9 +49,9 @@ func TestParseSchedule(t *testing.T) {
 	}{
 		{"2025-01-01T18:00:00Z", secondParser, "0 5 * * * *", "2025-01-01T18:05:00Z"},
 		{"2025-01-01T18:06:00Z", secondParser, "0 5 * * * *", "2025-01-01T19:05:00Z"},
-		{"2025-01-01T18:00:00Z", standardParser, "5 * * * *", "2025-01-01T18:05:00Z"},
+		{"2025-01-01T18:00:00Z", interfaceStandardParser, "5 * * * *", "2025-01-01T18:05:00Z"},
 		{"2025-01-01T18:00:00Z", secondParser, "CRON_TZ=UTC  0 5 * * * *", "2025-01-01T18:05:00Z"},
-		{"2025-01-01T18:00:00Z", standardParser, "CRON_TZ=UTC  5 * * * *", "2025-01-01T18:05:00Z"},
+		{"2025-01-01T18:00:00Z", interfaceStandardParser, "CRON_TZ=UTC  5 * * * *", "2025-01-01T18:05:00Z"},
 		{"2025-01-01T18:00:00Z", secondParser, "CRON_TZ=Asia/Tokyo 0 5 * * * *", "2025-01-02T03:05:00+09:00"},
 		{"2025-01-01T18:00:00Z", secondParser, "@every 5m", "2025-01-01T18:05:00Z"},
 		{"2025-01-01T18:00:00Z", secondParser, "@midnight", "2025-01-02T00:00:00Z"},
@@ -250,7 +251,7 @@ func TestStandardSpecSchedule(t *testing.T) {
 }
 
 func TestNoDescriptorParser(t *testing.T) {
-	parser := NewParser(Minute | Hour)
+	parser := NewDefaultParser(Minute | Hour)
 	_, err := parser.Parse("@every 1m")
 	if err == nil {
 		t.Error("expected an error, got none")
@@ -287,16 +288,18 @@ func FuzzParser(f *testing.F) {
 		f.Add(v)
 	}
 	f.Fuzz(func(t *testing.T, schedule string) {
-		parsed, errStd := ParseStandard(schedule)
-		if errStd == nil {
+		var parsed Schedule
+		var err error
+		parsed, err = ParseStandard(schedule)
+		if err == nil {
 			sanityCheck(t, parsed, schedule, "standard parser")
 		}
-		parsed, errSec := secondParser.Parse(schedule)
-		if errSec == nil {
+		parsed, err = secondParser.Parse(schedule)
+		if err == nil {
 			sanityCheck(t, parsed, schedule, "second parser")
 		}
-		parsed, errOpt := optionalSecondParser.Parse(schedule)
-		if errOpt == nil {
+		parsed, err = optionalSecondParser.Parse(schedule)
+		if err == nil {
 			sanityCheck(t, parsed, schedule, "optional second parser")
 		}
 	})

@@ -98,7 +98,7 @@ func New(opts ...Option) *Cron {
 		running:          false,
 		runningMu:        sync.Mutex{},
 		logger:           slog.Default(),
-		parser:           standardParser,
+		parser:           toInterface(standardParser),
 		next:             1,
 		clock:            NewDefaultClock(time.Local, DefaultNopTimer),
 		onCycleCompleted: []func(){},

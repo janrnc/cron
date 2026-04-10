@@ -8,7 +8,7 @@ import (
 )
 
 func TestWithParser(t *testing.T) {
-	var parser = NewParser(Dow)
+	var parser = toInterface(NewDefaultParser(Dow))
 	c := New(WithParser(parser))
 	if c.parser != parser {
 		t.Error("expected provided parser")
