@@ -3,6 +3,7 @@ package cron
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -351,5 +352,129 @@ func TestWithLocationNil(t *testing.T) {
 	sched2 := sched.WithLocation(nil)
 	if sched2 != sched {
 		t.Fatalf("expected nil location to return same schedule")
+	}
+}
+
+func TestMinInterval(t *testing.T) {
+	tests := []struct {
+		spec     string
+		expected time.Duration
+	}{
+		// Constant delay
+		{"@every 4s", 4 * time.Second},
+		{"@every 1h30m", 90 * time.Minute},
+
+		// Within a minute
+		{"* * * * * *", time.Second},
+		{"*/5 * * * * *", 5 * time.Second},
+		{"0,3 0 0 29 2 *", 3 * time.Second},
+		{"10,20-22/2,40 * * * * *", 2 * time.Second},
+
+		// Across minutes
+		{"0,57 * * * * *", 3 * time.Second},
+		{"0,57 10,11 * * * *", 3 * time.Second},
+		{"0,57 */2 * * * *", 57 * time.Second},
+		{"0,30 */2 * * * *", 30 * time.Second},
+		{"0 * * * * *", time.Minute},
+		{"0 */15 * * * *", 15 * time.Minute},
+		{"0 10,50 * * * *", 20 * time.Minute},
+
+		// Across hours
+		{"0,57 59,0 * * * *", 3 * time.Second},
+		{"0,57 59,0 */2 * * *", 57 * time.Second},
+		{"57 59,0 */2 * * *", 59 * time.Minute},
+		{"@hourly", time.Hour},
+		{"0 30 8,20 * * *", 12 * time.Hour},
+
+		// Across days
+		{"0,57 59,0 23,0 * * *", 3 * time.Second},
+		{"0 0 22,2 * * *", 4 * time.Hour},
+		{"@daily", 24 * time.Hour},
+		{"0 0 9 * * 1,4", 3 * 24 * time.Hour},
+		{"@weekly", 7 * 24 * time.Hour},
+		{"0 0 0 L * 5", 24 * time.Hour},
+		{"0 0 0 1,L * *", 24 * time.Hour},
+
+		// Across months and years
+		{"@monthly", 28 * 24 * time.Hour},
+		{"0 0 0 L * *", 28 * 24 * time.Hour},
+		{"0 0 12 */7 * *", 24 * time.Hour},
+		{"0 0 0 31 1,3 *", 59 * 24 * time.Hour},
+		{"@yearly", 365 * 24 * time.Hour},
+		{"0 0 0 29 2 *", 1461 * 24 * time.Hour},
+
+		// Relative to the end of the month, nearest weekday, nth weekday
+		{"0 0 0 L-4 * *", 28 * 24 * time.Hour},
+		{"0 0 0 L-28 * *", 29 * 24 * time.Hour},
+		{"0 0 0 * * 5L", 28 * 24 * time.Hour},
+		{"0 0 0 * * 5#1", 28 * 24 * time.Hour},
+		{"0 0 0 * * 5#4,5L", 7 * 24 * time.Hour},
+		{"0 0 0 1W * *", 28 * 24 * time.Hour},
+		{"0 0 0 31W * *", 29 * 24 * time.Hour},
+		{"0 0 0 LW * *", 28 * 24 * time.Hour},
+		{"0 0 0 1W,LW * *", 24 * time.Hour},
+
+		// Never activates
+		{"0 0 0 30 2 *", 0},
+		{"0 0 0 30W 2 *", 0},
+
+		// Location offset is assumed constant
+		{"TZ=Asia/Tokyo 0 30 04 * * *", 24 * time.Hour},
+		{"TZ=America/New_York 0 30 1 * * *", 24 * time.Hour},
+	}
+
+	for _, test := range tests {
+		sched, err := secondParser.Parse(test.spec)
+		if err != nil {
+			t.Error(err)
+			continue
+		}
+		actual := sched.MinInterval()
+		if actual != test.expected {
+			t.Errorf("%s: (expected) %v != %v (actual)", test.spec, test.expected, actual)
+		}
+	}
+}
+
+func TestMinIntervalConcurrent(t *testing.T) {
+	sched, err := secondParser.Parse("0 0 0 L * *")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nyc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	copied := sched.WithLocation(nyc)
+
+	var wg sync.WaitGroup
+	results := make([]time.Duration, 8)
+	for i := range results {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if i%2 == 0 {
+				results[i] = sched.MinInterval()
+			} else {
+				results[i] = copied.MinInterval()
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	for i, actual := range results {
+		if actual != 28*24*time.Hour {
+			t.Errorf("call %d: (expected) %v != %v (actual)", i, 28*24*time.Hour, actual)
+		}
+	}
+}
+
+func BenchmarkMinInterval(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		sched, err := secondParser.Parse("0 0 12 */7 * *")
+		if err != nil {
+			b.Fatal(err)
+		}
+		sched.MinInterval()
 	}
 }

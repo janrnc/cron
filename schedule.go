@@ -1,6 +1,8 @@
 package cron
 
 import (
+	"math"
+	"sync"
 	"time"
 
 	"github.com/gdgvda/cron/internal/matcher"
@@ -23,6 +25,21 @@ type DefaultSchedule struct {
 
 	// Constant delay mode when not zero
 	delay time.Duration
+
+	minInterval func() time.Duration
+}
+
+func newDefaultSchedule(second, minute, hour, day, month matcher.Matcher, location *time.Location) *DefaultSchedule {
+	s := &DefaultSchedule{
+		secondMatch: second,
+		minuteMatch: minute,
+		hourMatch:   hour,
+		dayMatch:    day,
+		monthMatch:  month,
+		location:    location,
+	}
+	s.minInterval = sync.OnceValue(s.computeMinInterval)
+	return s
 }
 
 // Next returns the next time this schedule is activated, greater than the given
@@ -160,4 +177,58 @@ func (s *DefaultSchedule) WithLocation(l *time.Location) *DefaultSchedule {
 	*s2 = *s
 	s2.location = l
 	return s2
+}
+
+// MinInterval returns the shortest time between two consecutive activations
+// of the schedule, assuming its location keeps a constant UTC offset. The
+// result is exact in UTC or any fixed-offset zone. In a location that observes
+// daylight saving time, activations on either side of a clock change can be
+// closer than this, down to one second apart. It returns 0 if the schedule
+// never activates.
+func (s *DefaultSchedule) MinInterval() time.Duration {
+	if s.delay != 0 {
+		return s.delay
+	}
+	return s.minInterval()
+}
+
+// calendarCycle is the number of days after which the Gregorian calendar,
+// weekdays included, repeats: 400 years.
+const calendarCycle = 146097
+
+const secondsPerDay = 86400
+
+func (s *DefaultSchedule) computeMinInterval() time.Duration {
+	base := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	firstSec, lastSec, secGap := scan(base, time.Second, secondsPerDay, func(t time.Time) bool {
+		return s.hourMatch(t) && s.minuteMatch(t) && s.secondMatch(t)
+	})
+	firstDay, lastDay, dayGap := scan(base, 24*time.Hour, calendarCycle, func(t time.Time) bool {
+		return s.monthMatch(t) && s.dayMatch(t)
+	})
+	if firstSec < 0 || firstDay < 0 {
+		return 0
+	}
+	dayGap = min(dayGap, calendarCycle-lastDay+firstDay)
+	return time.Duration(min(secGap, dayGap*secondsPerDay-lastSec+firstSec)) * time.Second
+}
+
+// scan checks n instants, step apart from start, and returns the indices of the
+// first and last matching ones (-1 if none) and the smallest distance between
+// two consecutive matching ones (math.MaxInt if fewer than two).
+func scan(start time.Time, step time.Duration, n int, match func(time.Time) bool) (first, last, gap int) {
+	first, last, gap = -1, -1, math.MaxInt
+	t := start
+	for i := 0; i < n; i++ {
+		if match(t) {
+			if first < 0 {
+				first = i
+			} else {
+				gap = min(gap, i-last)
+			}
+			last = i
+		}
+		t = t.Add(step)
+	}
+	return first, last, gap
 }
