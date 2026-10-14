@@ -459,6 +459,34 @@ func TestMinIntervalTimeOfDay(t *testing.T) {
 	}
 }
 
+func TestMinIntervalDays(t *testing.T) {
+	doms := []string{"*", "1", "29", "31", "L", "L-28", "15W", "31W", "LW"}
+	months := []string{"*", "2", "1,3", "12"}
+	dows := []string{"*", "1", "5L", "1#1", "1#5"}
+	for _, dom := range doms {
+		for _, month := range months {
+			for _, dow := range dows {
+				spec := fmt.Sprintf("0 0 0 %s %s %s", dom, month, dow)
+				sched, err := secondParser.Parse(spec)
+				if err != nil {
+					t.Fatal(err)
+				}
+				days := scan(scanStart, 24*time.Hour, 146097, func(t time.Time) bool {
+					return sched.monthMatch(t) && sched.dayMatch(t)
+				})
+				var expected time.Duration
+				if days.first >= 0 {
+					expected = time.Duration(min(days.gap, 146097-days.last+days.first)) * 24 * time.Hour
+				}
+				actual := sched.MinInterval()
+				if actual != expected {
+					t.Errorf("%s: (expected) %v != %v (actual)", spec, expected, actual)
+				}
+			}
+		}
+	}
+}
+
 func TestMinIntervalConcurrent(t *testing.T) {
 	sched, err := secondParser.Parse("0 0 0 L * *")
 	if err != nil {

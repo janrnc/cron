@@ -226,7 +226,7 @@ can be triggered again:
 Month lengths, leap years and weekdays are taken into account. The schedule's
 location is assumed to keep a constant UTC offset: activations on either side
 of a daylight saving time change can be closer. The result is computed on first
-use, which can take tens of milliseconds, and cached afterwards.
+use, which takes under a millisecond, and cached afterwards.
 
 # Overlapping executions
 

@@ -192,22 +192,41 @@ func (s *DefaultSchedule) MinInterval() time.Duration {
 	return s.minInterval()
 }
 
-// calendarCycle is the number of days after which the Gregorian calendar,
-// weekdays included, repeats: 400 years.
-const calendarCycle = 146097
+// yearType identifies the years sharing the same calendar.
+type yearType struct {
+	weekday time.Weekday
+	leap    bool
+}
 
 func (s *DefaultSchedule) computeMinInterval() time.Duration {
-	days := scan(scanStart, 24*time.Hour, calendarCycle, func(t time.Time) bool {
-		return s.monthMatch(t) && s.dayMatch(t)
-	})
 	seconds := scan(scanStart, time.Second, 60, s.secondMatch)
 	minutes := scan(scanStart, time.Minute, 60, s.minuteMatch)
 	hours := scan(scanStart, time.Hour, 24, s.hourMatch)
 	timeOfDay := hours.nest(minutes.nest(seconds))
+	years := map[yearType]span{}
+	days := span{-1, -1, math.MaxInt64, 24 * time.Hour}
+	var offset int64
+	for y := scanStart.Year(); y < scanStart.Year()+400; y++ {
+		start := time.Date(y, 1, 1, 0, 0, 0, 0, time.UTC)
+		key := yearType{start.Weekday(), y%4 == 0 && (y%100 != 0 || y%400 == 0)}
+		length := int64(365)
+		if key.leap {
+			length++
+		}
+		year, ok := years[key]
+		if !ok {
+			year = scan(start, 24*time.Hour, length, func(t time.Time) bool {
+				return s.monthMatch(t) && s.dayMatch(t)
+			})
+			years[key] = year
+		}
+		days = days.extend(offset, year)
+		offset += length
+	}
 	if days.first < 0 || timeOfDay.first < 0 {
 		return 0
 	}
-	days.gap = min(days.gap, calendarCycle-days.last+days.first)
+	days.gap = min(days.gap, offset-days.last+days.first)
 	nested := days.nest(timeOfDay)
 	return time.Duration(nested.gap) * nested.unit
 }
@@ -238,6 +257,17 @@ func (s span) nest(inner span) span {
 		nested.gap = min(nested.gap, s.gap*ratio-inner.last+inner.first)
 	}
 	return nested
+}
+
+// extend appends next, a span starting offset units after the start of s.
+func (s span) extend(offset int64, next span) span {
+	if next.first < 0 {
+		return s
+	}
+	if s.first < 0 {
+		return span{offset + next.first, offset + next.last, next.gap, next.unit}
+	}
+	return span{s.first, offset + next.last, min(s.gap, next.gap, offset+next.first-s.last), s.unit}
 }
 
 // scan checks n instants, step apart from start.
