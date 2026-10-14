@@ -196,39 +196,64 @@ func (s *DefaultSchedule) MinInterval() time.Duration {
 // weekdays included, repeats: 400 years.
 const calendarCycle = 146097
 
-const secondsPerDay = 86400
-
 func (s *DefaultSchedule) computeMinInterval() time.Duration {
-	base := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
-	firstSec, lastSec, secGap := scan(base, time.Second, secondsPerDay, func(t time.Time) bool {
-		return s.hourMatch(t) && s.minuteMatch(t) && s.secondMatch(t)
-	})
-	firstDay, lastDay, dayGap := scan(base, 24*time.Hour, calendarCycle, func(t time.Time) bool {
+	days := scan(scanStart, 24*time.Hour, calendarCycle, func(t time.Time) bool {
 		return s.monthMatch(t) && s.dayMatch(t)
 	})
-	if firstSec < 0 || firstDay < 0 {
+	seconds := scan(scanStart, time.Second, 60, s.secondMatch)
+	minutes := scan(scanStart, time.Minute, 60, s.minuteMatch)
+	hours := scan(scanStart, time.Hour, 24, s.hourMatch)
+	timeOfDay := hours.nest(minutes.nest(seconds))
+	if days.first < 0 || timeOfDay.first < 0 {
 		return 0
 	}
-	dayGap = min(dayGap, calendarCycle-lastDay+firstDay)
-	return time.Duration(min(secGap, dayGap*secondsPerDay-lastSec+firstSec)) * time.Second
+	days.gap = min(days.gap, calendarCycle-days.last+days.first)
+	nested := days.nest(timeOfDay)
+	return time.Duration(nested.gap) * nested.unit
 }
 
-// scan checks n instants, step apart from start, and returns the indices of the
-// first and last matching ones (-1 if none) and the smallest distance between
-// two consecutive matching ones (math.MaxInt if fewer than two).
-func scan(start time.Time, step time.Duration, n int, match func(time.Time) bool) (first, last, gap int) {
-	first, last, gap = -1, -1, math.MaxInt
+var scanStart = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// span describes the matching indices of a scan, counted in unit: the first
+// and last ones (-1 if none) and the smallest distance between two
+// consecutive ones (math.MaxInt64 if fewer than two).
+type span struct {
+	first, last, gap int64
+	unit             time.Duration
+}
+
+// nest combines s with inner, the span within each unit of s, into a span
+// counted in the unit of inner. It assumes inner is the same in every unit of
+// s, which holds for independent fields such as hours, minutes and seconds.
+// It does not hold for days within months or years, as month lengths, leap
+// years and weekdays change the matching days: nesting those needs a
+// different strategy.
+func (s span) nest(inner span) span {
+	if s.first < 0 || inner.first < 0 {
+		return span{-1, -1, math.MaxInt64, inner.unit}
+	}
+	ratio := int64(s.unit / inner.unit)
+	nested := span{s.first*ratio + inner.first, s.last*ratio + inner.last, inner.gap, inner.unit}
+	if s.gap != math.MaxInt64 {
+		nested.gap = min(nested.gap, s.gap*ratio-inner.last+inner.first)
+	}
+	return nested
+}
+
+// scan checks n instants, step apart from start.
+func scan(start time.Time, step time.Duration, n int64, match func(time.Time) bool) span {
+	s := span{-1, -1, math.MaxInt64, step}
 	t := start
-	for i := 0; i < n; i++ {
+	for i := int64(0); i < n; i++ {
 		if match(t) {
-			if first < 0 {
-				first = i
+			if s.first < 0 {
+				s.first = i
 			} else {
-				gap = min(gap, i-last)
+				s.gap = min(s.gap, i-s.last)
 			}
-			last = i
+			s.last = i
 		}
 		t = t.Add(step)
 	}
-	return first, last, gap
+	return s
 }
