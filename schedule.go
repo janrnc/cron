@@ -198,30 +198,45 @@ type yearType struct {
 	leap    bool
 }
 
+// monthType identifies the months sharing the same days and weekdays. Day
+// matches only depend on these, not on the month number.
+type monthType struct {
+	weekday time.Weekday
+	length  int64
+}
+
+// monthLengths are the lengths of the months of a non-leap year: February
+// gains a day in leap years.
+var monthLengths = [12]int64{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+
 func (s *DefaultSchedule) computeMinInterval() time.Duration {
 	seconds := scan(scanStart, time.Second, 60, s.secondMatch)
 	minutes := scan(scanStart, time.Minute, 60, s.minuteMatch)
 	hours := scan(scanStart, time.Hour, 24, s.hourMatch)
 	timeOfDay := hours.nest(minutes.nest(seconds))
-	years := map[yearType]span{}
+	var monthMatches [12]bool
+	for m := range monthMatches {
+		monthMatches[m] = s.monthMatch(time.Date(scanStart.Year(), time.Month(m+1), 1, 0, 0, 0, 0, time.UTC))
+	}
+	monthTypes := map[monthType]span{}
+	yearTypes := map[yearType]span{}
 	days := span{-1, -1, math.MaxInt64, 24 * time.Hour}
 	var offset int64
+	weekday := scanStart.Weekday()
 	for y := scanStart.Year(); y < scanStart.Year()+400; y++ {
-		start := time.Date(y, 1, 1, 0, 0, 0, 0, time.UTC)
-		key := yearType{start.Weekday(), y%4 == 0 && (y%100 != 0 || y%400 == 0)}
+		key := yearType{weekday, y%4 == 0 && (y%100 != 0 || y%400 == 0)}
+		year, ok := yearTypes[key]
+		if !ok {
+			year = s.yearSpan(y, key, monthMatches, monthTypes)
+			yearTypes[key] = year
+		}
 		length := int64(365)
 		if key.leap {
 			length++
 		}
-		year, ok := years[key]
-		if !ok {
-			year = scan(start, 24*time.Hour, length, func(t time.Time) bool {
-				return s.monthMatch(t) && s.dayMatch(t)
-			})
-			years[key] = year
-		}
 		days = days.extend(offset, year)
 		offset += length
+		weekday = (weekday + time.Weekday(length%7)) % 7
 	}
 	if days.first < 0 || timeOfDay.first < 0 {
 		return 0
@@ -229,6 +244,33 @@ func (s *DefaultSchedule) computeMinInterval() time.Duration {
 	days.gap = min(days.gap, offset-days.last+days.first)
 	nested := days.nest(timeOfDay)
 	return time.Duration(nested.gap) * nested.unit
+}
+
+// yearSpan chains the matching months of y, of type key, scanning the month
+// types not seen yet with the months of y.
+func (s *DefaultSchedule) yearSpan(y int, key yearType, monthMatches [12]bool, monthTypes map[monthType]span) span {
+	year := span{-1, -1, math.MaxInt64, 24 * time.Hour}
+	var offset int64
+	weekday := key.weekday
+	for m, match := range monthMatches {
+		length := monthLengths[m]
+		if m == 1 && key.leap {
+			length++
+		}
+		if match {
+			monthKey := monthType{weekday, length}
+			month, ok := monthTypes[monthKey]
+			if !ok {
+				start := time.Date(y, time.Month(m+1), 1, 0, 0, 0, 0, time.UTC)
+				month = scan(start, 24*time.Hour, length, s.dayMatch)
+				monthTypes[monthKey] = month
+			}
+			year = year.extend(offset, month)
+		}
+		offset += length
+		weekday = (weekday + time.Weekday(length%7)) % 7
+	}
+	return year
 }
 
 var scanStart = time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
